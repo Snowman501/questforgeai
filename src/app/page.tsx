@@ -1,6 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react'
 
+// ==== MONETIZATION SETTINGS (edit these two links when ready) ====
+const STRIPE_LINK = 'https://buy.stripe.com/YOUR_PAYMENT_LINK'   // Stripe → Payment Links
+const KOFI_LINK = 'https://ko-fi.com/YOUR_PAGE/shop'             // Your Ko-fi shop item
+const FREE_DAILY_LIMIT = 5                                        // free forges per day
+
 const GENRES = ['Any Genre', 'RPG', 'Survival', 'Horror', 'Puzzle', 'Platformer', 'Strategy', 'Roguelike', 'Adventure', 'Simulation']
 
 const GENRE_EXAMPLES: Record<string, { idea: string; hint: string }> = {
@@ -25,10 +30,44 @@ export default function Home() {
   const [copied, setCopied] = useState(false)
   const [visible, setVisible] = useState(false)
 
+  // ---- Pro / license state ----
+  const [isPro, setIsPro] = useState(false)
+  const [showUpgrade, setShowUpgrade] = useState(false)
+  const [licenseInput, setLicenseInput] = useState('')
+  const [activating, setActivating] = useState(false)
+  const [activateMsg, setActivateMsg] = useState('')
+  const [usedToday, setUsedToday] = useState(0)
+
   useEffect(() => {
     const saved = localStorage.getItem('qf_history')
     if (saved) setHistory(JSON.parse(saved))
+
+    // Restore daily usage counter (resets each calendar day)
+    const today = new Date().toDateString()
+    const usage = JSON.parse(localStorage.getItem('qf_usage') || '{}')
+    setUsedToday(usage.date === today ? usage.count : 0)
+
+    // Re-validate a saved license key against the server on every load
+    const key = localStorage.getItem('qf_license')
+    if (key) {
+      fetch('/api/license', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      })
+        .then(r => r.json())
+        .then(d => setIsPro(!!d.valid))
+        .catch(() => {})
+    }
   }, [])
+
+  const bumpUsage = () => {
+    const today = new Date().toDateString()
+    const usage = JSON.parse(localStorage.getItem('qf_usage') || '{}')
+    const count = (usage.date === today ? usage.count : 0) + 1
+    localStorage.setItem('qf_usage', JSON.stringify({ date: today, count }))
+    setUsedToday(count)
+  }
 
   const handleGenreChange = (g: string) => {
     setGenre(g)
@@ -37,21 +76,58 @@ export default function Home() {
 
   const forge = async () => {
     if (!idea.trim()) return
+
+    // Free-tier daily gate
+    if (!isPro && usedToday >= FREE_DAILY_LIMIT) {
+      setShowUpgrade(true)
+      return
+    }
+
     setLoading(true)
     setResult('')
     setVisible(false)
     const res = await fetch('/api/forge', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-License-Key': localStorage.getItem('qf_license') || '',
+      },
       body: JSON.stringify({ idea: `${genre !== 'Any Genre' ? `[${genre}] ` : ''}${idea}` })
     })
     const data = await res.json()
     setResult(data.result)
     setLoading(false)
     setTimeout(() => setVisible(true), 50)
+    if (!isPro) bumpUsage()
     const newHistory = [data.result, ...history].slice(0, 5)
     setHistory(newHistory)
     localStorage.setItem('qf_history', JSON.stringify(newHistory))
+  }
+
+  const activateLicense = async () => {
+    const key = licenseInput.trim()
+    if (!key) return
+    setActivating(true)
+    setActivateMsg('')
+    try {
+      const res = await fetch('/api/license', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      })
+      const data = await res.json()
+      if (data.valid) {
+        localStorage.setItem('qf_license', key)
+        setIsPro(true)
+        setActivateMsg('✅ Pro unlocked! Welcome aboard.')
+        setTimeout(() => setShowUpgrade(false), 1200)
+      } else {
+        setActivateMsg('❌ Key not recognized — check for typos and try again.')
+      }
+    } catch {
+      setActivateMsg('⚠️ Could not reach the server. Try again in a moment.')
+    }
+    setActivating(false)
   }
 
   const copyToClipboard = () => {
@@ -61,6 +137,11 @@ export default function Home() {
   }
 
   const exportPDF = () => {
+    // PDF export is a Pro feature
+    if (!isPro) {
+      setShowUpgrade(true)
+      return
+    }
     const win = window.open('', '_blank')
     if (!win) return
     win.document.write(`
@@ -99,8 +180,21 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
       <main className="flex-1 flex flex-col items-center p-4 sm:p-8 pt-12 sm:pt-16">
-        <h1 className="text-4xl sm:text-5xl font-bold text-purple-400 mb-2 text-center">⚔️ QuestForgeAI</h1>
-        <p className="text-gray-400 text-lg sm:text-xl mb-8 text-center">The AI Co-Designer for Game Developers</p>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-4xl sm:text-5xl font-bold text-purple-400 text-center">⚔️ QuestForgeAI</h1>
+          {isPro ? (
+            <span className="bg-gradient-to-r from-amber-400 to-yellow-500 text-black text-xs font-black px-2 py-1 rounded-md tracking-wider">PRO</span>
+          ) : (
+            <button onClick={() => setShowUpgrade(true)}
+              className="bg-amber-500 hover:bg-amber-400 text-black text-xs font-black px-2 py-1 rounded-md tracking-wider transition-all">
+              ⭐ GO PRO
+            </button>
+          )}
+        </div>
+        <p className="text-gray-400 text-lg sm:text-xl mb-2 text-center">The AI Co-Designer for Game Developers</p>
+        {!isPro && (
+          <p className="text-gray-600 text-xs mb-6">{Math.max(0, FREE_DAILY_LIMIT - usedToday)} of {FREE_DAILY_LIMIT} free forges left today</p>
+        )}
 
         <div className="w-full max-w-2xl">
           <select
@@ -151,7 +245,7 @@ export default function Home() {
                 {copied ? '✅ Copied!' : '📋 Copy'}
               </button>
               <button onClick={exportPDF} className="bg-purple-700 hover:bg-purple-600 text-white text-sm font-bold py-2 px-4 rounded-lg transition-all">
-                📄 Export PDF
+                📄 Export PDF {!isPro && <span className="text-amber-400">⭐</span>}
               </button>
             </div>
             {formatResult(result)}
@@ -172,6 +266,44 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* ==== UPGRADE / LICENSE MODAL ==== */}
+      {showUpgrade && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowUpgrade(false) }}>
+          <div className="bg-gray-900 border border-purple-600 rounded-2xl p-6 max-w-sm w-full text-center">
+            <h3 className="text-2xl font-bold text-amber-400 mb-2">⭐ QuestForge Pro</h3>
+            <p className="text-gray-300 text-sm mb-4">
+              Unlimited forges, longer &amp; deeper design documents, and PDF export.
+              One-time purchase — yours forever.
+            </p>
+            <a href={STRIPE_LINK} target="_blank" rel="noopener noreferrer"
+              className="block bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-xl mb-2 transition-all">
+              💳 Get Pro — $12
+            </a>
+            <a href={KOFI_LINK} target="_blank" rel="noopener noreferrer"
+              className="block bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 rounded-xl mb-4 transition-all">
+              ☕ Buy on Ko-fi
+            </a>
+            <p className="text-gray-500 text-xs mb-2">Your license key arrives by email within minutes.</p>
+            <input
+              value={licenseInput}
+              onChange={(e) => setLicenseInput(e.target.value)}
+              placeholder="SLNG-XXXX-XXXX-XXXX"
+              className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 text-white text-center tracking-widest placeholder-gray-600 focus:outline-none focus:border-purple-400 mb-2"
+            />
+            <button onClick={activateLicense} disabled={activating}
+              className="w-full bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-white font-bold py-3 rounded-xl transition-all">
+              {activating ? 'Checking...' : '🔑 Activate License'}
+            </button>
+            {activateMsg && <p className="text-sm mt-2 text-gray-300">{activateMsg}</p>}
+            <button onClick={() => setShowUpgrade(false)}
+              className="text-gray-500 hover:text-gray-300 text-sm mt-4 transition-all">
+              Maybe later
+            </button>
+          </div>
+        </div>
+      )}
 
       <footer className="border-t border-gray-800 py-6 text-center text-gray-600 text-sm">
         <p>⚔️ QuestForgeAI — Built by <span className="text-purple-500 font-semibold">SL NextGen Global</span></p>

@@ -13,9 +13,37 @@ const GENRE_PROMPTS: Record<string, string> = {
   'Any Genre': 'Be creative and suggest the best fitting genre for this idea.'
 }
 
+// ---- LICENSE GATE (reads the same Supabase brain the webhooks write to) ----
+async function checkLicense(key: string | null): Promise<boolean> {
+  if (!key || !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return false
+  try {
+    const r = await fetch(
+      `${process.env.SUPABASE_URL}/rest/v1/licenses?key=eq.${encodeURIComponent(key.trim())}&select=key&limit=1`,
+      {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        },
+        cache: 'no-store',
+      }
+    )
+    if (!r.ok) return false
+    const rows = await r.json()
+    return Array.isArray(rows) && rows.length > 0
+  } catch {
+    return false
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { idea } = await req.json()
+
+    // Pro check: the frontend sends the saved key in this header
+    const isPro = await checkLicense(req.headers.get('x-license-key'))
+
+    // Free users get a solid taste; Pro gets the full engine.
+    const maxTokens = isPro ? 4096 : 1200
 
     const genreMatch = idea.match(/^\[(.+?)\]/)
     const genre = genreMatch ? genreMatch[1] : 'Any Genre'
@@ -29,6 +57,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
+        max_tokens: maxTokens,
         messages: [{
           role: 'system',
           content: `You are QuestForgeAI, an expert game design co-designer. ${genrePrompt} Always respond with a fully structured Game Design Document using markdown headers (###) for each section.`
@@ -40,13 +69,12 @@ export async function POST(req: NextRequest) {
     })
 
     const data = await response.json()
-    console.log('Groq response:', JSON.stringify(data))
 
-    const result = data.choices[0].message.content
-    return NextResponse.json({ result })
+    const result = data.choices?.[0]?.message?.content || 'Generation failed — please try again.'
+    return NextResponse.json({ result, tier: isPro ? 'pro' : 'free' })
 
   } catch (err) {
     console.error('Route error:', err)
-    return NextResponse.json({ result: 'Something went wrong. Check terminal logs.' })
+    return NextResponse.json({ result: 'Something went wrong. Please try again.', tier: 'free' })
   }
 }
