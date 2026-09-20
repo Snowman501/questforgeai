@@ -175,6 +175,16 @@ export default function Home() {
 
       <footer className="border-t border-gray-800 py-6 text-center text-gray-600 text-sm">
         <p>⚔️ QuestForgeAI — Built by <span className="text-purple-500 font-semibold">SL NextGen Global</span></p>
+        <div className="mt-6 text-center border-t border-gray-700 pt-6">
+          <p className="text-gray-500 text-sm mb-2">Built by Loren Barnhart</p>
+          <img 
+            src="/loren-headshot.jpg" 
+            alt="Loren Barnhart" 
+            className="w-20 h-20 rounded-full mx-auto mb-3 object-cover"
+          />
+          <p className="text-gray-400 text-sm">📧 <a href="mailto:lb.designstudio.2024@gmail.com" className="text-purple-400 hover:text-purple-300">lb.designstudio.2024@gmail.com</a></p>
+          <p className="text-gray-400 text-sm">📞 <a href="tel:+15012905929" className="text-purple-400 hover:text-purple-300">(501) 290-5929</a></p>
+        </div>
         <p className="mt-1">The AI Co-Designer for Game Developers</p>
       </footer>
     </div>
